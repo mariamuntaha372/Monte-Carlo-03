@@ -237,8 +237,9 @@ for j = 1:num_strata
     sigma_j(j) = std(PT_j);
 end
 
-% Optimal allocation: n_j proportional to w_j * sigma_j
-opt_alloc = (weights' .* sigma_j) / sum(weights' .* sigma_j);
+% Optimal allocation as column vector
+w         = weights(:);          % ensure column
+opt_alloc = (w .* sigma_j) / sum(w .* sigma_j);  % column vector
 
 fprintf('\n=== Part 3(b): Optimal Allocation ===\n');
 fprintf('Pilot sigma_j:      '); fprintf('%.4f  ', sigma_j);   fprintf('\n');
@@ -247,7 +248,9 @@ fprintf('%-10s | %-10s | %-10s | %-22s\n', 'M', 'Price', 'Std Err', '95% CI');
 fprintf('%s\n', repmat('-',1,58));
 
 for M = [1e4, 1e5, 1e6]
-    nj = max(2, round(M * opt_alloc));  % at least 2 per stratum
+    nj = max(2, round(M * opt_alloc));  % column vector
+    nj = nj(:);                          % force column just in case
+
     strata_means = zeros(num_strata, 1);
     strata_vars  = zeros(num_strata, 1);
 
@@ -276,8 +279,9 @@ for M = [1e4, 1e5, 1e6]
         strata_vars(j)  = var(PT_j);
     end
 
-    price = sum(weights' .* strata_means);
-    se    = sqrt(sum((weights'.^2 .* strata_vars) ./ nj'));
+    % All column vectors now - no broadcasting ambiguity
+    price = sum(w .* strata_means);
+    se    = sqrt(sum((w.^2 .* strata_vars) ./ nj));
     CI_lo = price - 1.96*se;
     CI_hi = price + 1.96*se;
     fprintf('%-10d | %-10.4f | %-10.6f | [%.4f, %.4f]\n', M, price, se, CI_lo, CI_hi);
