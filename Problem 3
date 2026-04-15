@@ -1,30 +1,32 @@
 %% Problem 3, Part 1: Control Variate
 clear; clc;
 
-% Parameters
+% Model parameters: GBM under risk-neutral measure
 S0 = 100; r = 0.05; sigma = 0.3; T = 1; K = 110;
-m = 12; dt = T/m;
+m = 12; dt = T/m;  % monthly monitoring: 12 steps of size 1/12
 M_vals = [1e4, 1e5, 1e6];
 
 %% Part 1(a): Pilot Study - Correlations & Scatter Plots
+% Use M0 = 1000 pilot paths to estimate correlations and compute pilot beta
 M0 = 1000;
-Z_pilot = randn(M0, m);
+Z_pilot = randn(M0, m);  % standard normal increments for each path and time step
 S_pilot = zeros(M0, m+1);
 S_pilot(:,1) = S0;
+% Simulate GBM paths using the exact log-normal update formula
 for j = 1:m
     S_pilot(:,j+1) = S_pilot(:,j) .* exp((r - 0.5*sigma^2)*dt + sigma*sqrt(dt)*Z_pilot(:,j));
 end
 
-% Payoff
+% Discounted lookback call payoff: max over monitored dates minus strike, floored at 0
 PT_pilot = exp(-r*T) * max(max(S_pilot, [], 2) - K, 0);
 
-% Control Variates
-C1 = S_pilot(:, end);                          % (i) ST
-C2 = exp(-r*T) * max(S_pilot(:,end) - K, 0);  % (ii) European Call
-GT = prod(S_pilot, 2).^(1/(m+1));             % (iii) Geometric mean (includes S0..ST)
-C3 = exp(-r*T) * max(GT - K, 0);              % Geometric Call
+% Three candidate control variates:
+C1 = S_pilot(:, end);                          % (i)  Terminal stock price S_T
+C2 = exp(-r*T) * max(S_pilot(:,end) - K, 0);  % (ii) Discounted European call payoff
+GT = prod(S_pilot, 2).^(1/(m+1));             % (iii) Geometric mean of S_0, S_{1/12}, ..., S_T
+C3 = exp(-r*T) * max(GT - K, 0);              % Discounted geometric average call payoff
 
-% Correlations
+% Compute Pearson correlations between PT and each candidate control variate
 corr1 = corr(PT_pilot, C1);
 corr2 = corr(PT_pilot, C2);
 corr3 = corr(PT_pilot, C3);
@@ -32,22 +34,23 @@ fprintf('Corr with ST:        %.4f\n', corr1);
 fprintf('Corr with Euro Call: %.4f\n', corr2);
 fprintf('Corr with Geo Call:  %.4f\n\n', corr3);
 
-% Optimal beta from pilot (saved for Part 1c)
+% Estimate optimal beta from pilot using: beta = Cov(PT, Y) / Var(Y)
+% This minimizes the variance of the CV estimator PT - beta*(Y - E[Y])
 cov_pilot = cov(PT_pilot, C2);
 beta_pilot = cov_pilot(1,2) / cov_pilot(2,2);
 fprintf('Pilot beta (saved for Part 1c): %.4f\n\n', beta_pilot);
 
-% Scatter Plots
+% Scatter plots to visually assess linearity between PT and each control variate
 figure;
 subplot(1,3,1); scatter(C1, PT_pilot, '.'); xlabel('S_T'); ylabel('P_T'); title('P_T vs S_T');
 subplot(1,3,2); scatter(C2, PT_pilot, '.'); xlabel('Euro Call'); ylabel('P_T'); title('P_T vs Euro Call');
 subplot(1,3,3); scatter(C3, PT_pilot, '.'); xlabel('Geo Call'); ylabel('P_T'); title('P_T vs Geo Call');
 
 %% Part 1(b): Pricing - Standard MC and CV with recomputed beta
-% Black-Scholes price for European Call (known mean of C2)
+% Black-Scholes closed-form price for European call: used as E[Y], the known mean of C2
 d1 = (log(S0/K) + (r + 0.5*sigma^2)*T) / (sigma*sqrt(T));
 d2 = d1 - sigma*sqrt(T);
-EY = S0*normcdf(d1) - K*exp(-r*T)*normcdf(d2);
+EY = S0*normcdf(d1) - K*exp(-r*T)*normcdf(d2);  % BS call price = E[e^{-rT}(S_T - K)^+]
 
 fprintf('=== Part 1(b): Recomputed Beta ===\n');
 fprintf('%-8s | %-10s | %-8s | %-16s | %-10s | %-8s | %-16s | %-8s\n', ...
@@ -55,7 +58,7 @@ fprintf('%-8s | %-10s | %-8s | %-16s | %-10s | %-8s | %-16s | %-8s\n', ...
 fprintf('%s\n', repmat('-',1,100));
 
 for M = M_vals
-    % Simulate paths
+    % Simulate fresh GBM paths for each sample size
     Z = randn(M, m);
     S = zeros(M, m+1);
     S(:,1) = S0;
@@ -63,18 +66,19 @@ for M = M_vals
         S(:,j+1) = S(:,j) .* exp((r - 0.5*sigma^2)*dt + sigma*sqrt(dt)*Z(:,j));
     end
 
-    % Payoffs
+    % Discounted lookback payoff and European call payoff
     PT = exp(-r*T) * max(max(S, [], 2) - K, 0);
     Y  = exp(-r*T) * max(S(:,end) - K, 0);
 
-    % Recompute beta from this sample
+    % Recompute beta from this sample (minimizes CV variance for this draw)
     cov_mat = cov(PT, Y);
     beta_b  = cov_mat(1,2) / cov_mat(2,2);
 
-    % Estimators
+    % Standard MC estimator and CV estimator: PT - beta*(Y - E[Y])
     MC_price = mean(PT);
     CV_price = mean(PT - beta_b * (Y - EY));
 
+    % Standard errors: std of estimator divided by sqrt(M)
     MC_std = std(PT) / sqrt(M);
     CV_std = std(PT - beta_b*(Y - EY)) / sqrt(M);
 
@@ -86,6 +90,8 @@ for M = M_vals
 end
 
 %% Part 1(c): Pricing with fixed pilot beta
+% Use the beta estimated from the pilot in Part 1(a) instead of recomputing per sample
+% This avoids the bias introduced by using the same data to estimate beta and price
 fprintf('\n=== Part 1(c): Fixed Pilot Beta = %.4f ===\n', beta_pilot);
 fprintf('%-8s | %-10s | %-8s | %-16s | %-10s | %-8s | %-16s\n', ...
     'M', 'MC Price', 'MC Std', 'MC 95% CI', 'CV Price', 'CV Std', 'CV 95% CI');
@@ -103,6 +109,7 @@ for M = M_vals
     Y  = exp(-r*T) * max(S(:,end) - K, 0);
 
     MC_price = mean(PT);
+    % CV estimator using fixed pilot beta: unbiased since beta is independent of this sample
     CV_price = mean(PT - beta_pilot * (Y - EY));
 
     MC_std = std(PT) / sqrt(M);
@@ -117,6 +124,7 @@ end
 
 
 %% Problem 3, Part 2: Antithetic Variates
+% Each section is self-contained with its own clear/clc
 clear; clc;
 
 S0 = 100; r = 0.05; sigma = 0.3; T = 1; K = 110;
@@ -127,16 +135,17 @@ fprintf('%-8s | %-10s | %-8s | %-20s\n', 'M', 'Price', 'Std', '95% CI');
 fprintf('%s\n', repmat('-',1,55));
 
 for M = [1e4, 1e5, 1e6]
-    n = M/2; % number of antithetic pairs
-    Z = randn(n, m);
+    n = M/2; % Use M/2 antithetic pairs so total paths = M
+    Z = randn(n, m);  % Generate n base random increments
 
-    % Original paths
+    % Original paths using Z
     S1 = zeros(n, m+1); S1(:,1) = S0;
     for j = 1:m
         S1(:,j+1) = S1(:,j) .* exp((r - 0.5*sigma^2)*dt + sigma*sqrt(dt)*Z(:,j));
     end
 
-    % Antithetic paths
+    % Antithetic paths using -Z: negating increments induces negative correlation
+    % between P1 and P2, reducing variance of their average
     S2 = zeros(n, m+1); S2(:,1) = S0;
     for j = 1:m
         S2(:,j+1) = S2(:,j) .* exp((r - 0.5*sigma^2)*dt + sigma*sqrt(dt)*(-Z(:,j)));
@@ -145,11 +154,11 @@ for M = [1e4, 1e5, 1e6]
     P1 = exp(-r*T) * max(max(S1, [], 2) - K, 0);
     P2 = exp(-r*T) * max(max(S2, [], 2) - K, 0);
 
-    % Antithetic estimator: average of paired payoffs
+    % Antithetic estimator: average of each pair; variance = (Var(P1) + Cov(P1,P2)) / 2
     P_anti = (P1 + P2) / 2;
 
     price = mean(P_anti);
-    se    = std(P_anti) / sqrt(n); % n pairs, not M
+    se    = std(P_anti) / sqrt(n); % divide by n (number of pairs), not M
     CI    = [price - 1.96*se, price + 1.96*se];
 
     fprintf('%-8d | %-10.4f | %-8.4f | [%-7.4f, %-7.4f]\n', M, price, se, CI(1), CI(2));
@@ -157,22 +166,26 @@ end
 
 
 %% Problem 3, Part 3: Stratified Sampling
+% Each section is self-contained with its own clear/clc
 clear; clc;
 
 S0 = 100; r = 0.05; sigma = 0.3; T = 1; K = 110;
 m = 12; dt = T/m;
 
+% Stratify the terminal Brownian motion B(1) ~ N(0,1) into 7 intervals
+% Stratum probabilities are the N(0,1) probability mass in each interval
 edges      = [-inf, -0.8, -0.4, -0.1, 0.1, 0.4, 0.8, inf];
-weights    = diff(normcdf(edges));
+weights    = diff(normcdf(edges));  % P(B(1) in stratum j) for each j
 num_strata = length(weights);
 
 %% Part 3(a): Proportional Allocation
+% Allocate samples to each stratum proportional to its probability weight
 fprintf('=== Part 3(a): Proportional Allocation ===\n');
 fprintf('%-10s | %-10s | %-10s | %-22s\n', 'M', 'Price', 'Std Err', '95% CI');
 fprintf('%s\n', repmat('-',1,58));
 
 for M = [1e4, 1e5, 1e6]
-    nj = max(2, round(M * weights));  % at least 2 per stratum for var()
+    nj = max(2, round(M * weights));  % at least 2 per stratum so var() is well-defined
     strata_means = zeros(num_strata, 1);
     strata_vars  = zeros(num_strata, 1);
 
@@ -180,20 +193,27 @@ for M = [1e4, 1e5, 1e6]
         n      = nj(j);
         U      = rand(n, 1);
         lo     = normcdf(edges(j)); hi = normcdf(edges(j+1));
+        % Inverse CDF trick: sample B(1) uniformly within stratum j's probability interval
         Z_term = norminv(lo + U*(hi - lo));
-        B1     = Z_term * sqrt(T);
+        B1     = Z_term * sqrt(T);  % terminal Brownian motion value B(T) = B(1)
 
+        % Brownian bridge construction: simulate intermediate B(t) conditioned on B(T) = B1
+        % This fills in the path B(dt), B(2dt), ..., B((m-1)dt) given B(T)
         S_paths = zeros(n, m+1);
         S_paths(:,1) = S0;
-        B_curr = zeros(n, 1);
+        B_curr = zeros(n, 1);  % B(0) = 0
         for i = 1:m-1
             t_prev     = (i-1)*dt;
             t_curr     = i*dt;
+            % Conditional mean: E[B(t) | B(s), B(T)] = B(s) + (t-s)/(T-s) * (B(T) - B(s))
             mu_bridge  = B_curr + (dt / (T - t_prev)) * (B1 - B_curr);
+            % Conditional variance: Var[B(t) | B(s), B(T)] = (t-s)(T-t)/(T-s)
             var_bridge = dt * (T - t_curr) / (T - t_prev);
             B_curr     = mu_bridge + sqrt(var_bridge) * randn(n, 1);
+            % Recover stock price from Brownian motion value at time t_curr
             S_paths(:, i+1) = S0 * exp((r - 0.5*sigma^2)*t_curr + sigma*B_curr);
         end
+        % Final step uses the fixed terminal value B1
         S_paths(:, m+1) = S0 * exp((r - 0.5*sigma^2)*T + sigma*B1);
 
         PT_j = exp(-r*T) * max(max(S_paths, [], 2) - K, 0);
@@ -201,6 +221,8 @@ for M = [1e4, 1e5, 1e6]
         strata_vars(j)  = var(PT_j);
     end
 
+    % Stratified estimator: weighted sum of stratum means
+    % Standard error uses the stratified variance formula: sum_j w_j^2 * sigma_j^2 / n_j
     price = sum(weights' .* strata_means);
     se    = sqrt(sum((weights'.^2 .* strata_vars) ./ nj'));
     CI_lo = price - 1.96*se;
@@ -209,8 +231,10 @@ for M = [1e4, 1e5, 1e6]
 end
 
 %% Part 3(b): Optimal Allocation - Pilot
+% Run N0 pilot paths to estimate per-stratum standard deviations sigma_j
+% Optimal allocation: n_j proportional to w_j * sigma_j (Neyman allocation)
 N0       = 1000;
-nj_pilot = max(5, round(N0 * weights));
+nj_pilot = max(5, round(N0 * weights));  % at least 5 per stratum for reliable std estimate
 sigma_j  = zeros(num_strata, 1);
 
 for j = 1:num_strata
@@ -226,6 +250,7 @@ for j = 1:num_strata
     for i = 1:m-1
         t_prev     = (i-1)*dt;
         t_curr     = i*dt;
+        % Brownian bridge conditional mean and variance (same as Part 3a)
         mu_bridge  = B_curr + (dt / (T - t_prev)) * (B1 - B_curr);
         var_bridge = dt * (T - t_curr) / (T - t_prev);
         B_curr     = mu_bridge + sqrt(var_bridge) * randn(n, 1);
@@ -234,12 +259,13 @@ for j = 1:num_strata
     S_paths(:, m+1) = S0 * exp((r - 0.5*sigma^2)*T + sigma*B1);
 
     PT_j       = exp(-r*T) * max(max(S_paths, [], 2) - K, 0);
-    sigma_j(j) = std(PT_j);
+    sigma_j(j) = std(PT_j);  % pilot estimate of payoff std dev within stratum j
 end
 
-% Optimal allocation as column vector
-w         = weights(:);          % ensure column
-opt_alloc = (w .* sigma_j) / sum(w .* sigma_j);  % column vector
+% Neyman optimal allocation: allocate more samples to strata with higher variance
+% opt_alloc_j = (w_j * sigma_j) / sum_k(w_k * sigma_k)
+w         = weights(:);          % ensure column vector
+opt_alloc = (w .* sigma_j) / sum(w .* sigma_j);  % normalized optimal weights
 
 fprintf('\n=== Part 3(b): Optimal Allocation ===\n');
 fprintf('Pilot sigma_j:      '); fprintf('%.4f  ', sigma_j);   fprintf('\n');
@@ -248,8 +274,8 @@ fprintf('%-10s | %-10s | %-10s | %-22s\n', 'M', 'Price', 'Std Err', '95% CI');
 fprintf('%s\n', repmat('-',1,58));
 
 for M = [1e4, 1e5, 1e6]
-    nj = max(2, round(M * opt_alloc));  % column vector
-    nj = nj(:);                          % force column just in case
+    nj = max(2, round(M * opt_alloc));  % at least 2 per stratum; column vector
+    nj = nj(:);                          % force column vector to avoid broadcasting issues
 
     strata_means = zeros(num_strata, 1);
     strata_vars  = zeros(num_strata, 1);
@@ -267,6 +293,7 @@ for M = [1e4, 1e5, 1e6]
         for i = 1:m-1
             t_prev     = (i-1)*dt;
             t_curr     = i*dt;
+            % Brownian bridge conditional mean and variance
             mu_bridge  = B_curr + (dt / (T - t_prev)) * (B1 - B_curr);
             var_bridge = dt * (T - t_curr) / (T - t_prev);
             B_curr     = mu_bridge + sqrt(var_bridge) * randn(n, 1);
@@ -279,7 +306,7 @@ for M = [1e4, 1e5, 1e6]
         strata_vars(j)  = var(PT_j);
     end
 
-    % All column vectors now - no broadcasting ambiguity
+    % All vectors are column vectors: no broadcasting ambiguity in dot products
     price = sum(w .* strata_means);
     se    = sqrt(sum((w.^2 .* strata_vars) ./ nj));
     CI_lo = price - 1.96*se;
