@@ -1,0 +1,288 @@
+%% Problem 3, Part 1: Control Variate
+clear; clc;
+
+% Parameters
+S0 = 100; r = 0.05; sigma = 0.3; T = 1; K = 110;
+m = 12; dt = T/m;
+M_vals = [1e4, 1e5, 1e6];
+
+%% Part 1(a): Pilot Study - Correlations & Scatter Plots
+M0 = 1000;
+Z_pilot = randn(M0, m);
+S_pilot = zeros(M0, m+1);
+S_pilot(:,1) = S0;
+for j = 1:m
+    S_pilot(:,j+1) = S_pilot(:,j) .* exp((r - 0.5*sigma^2)*dt + sigma*sqrt(dt)*Z_pilot(:,j));
+end
+
+% Payoff
+PT_pilot = exp(-r*T) * max(max(S_pilot, [], 2) - K, 0);
+
+% Control Variates
+C1 = S_pilot(:, end);                          % (i) ST
+C2 = exp(-r*T) * max(S_pilot(:,end) - K, 0);  % (ii) European Call
+GT = prod(S_pilot, 2).^(1/(m+1));             % (iii) Geometric mean (includes S0..ST)
+C3 = exp(-r*T) * max(GT - K, 0);              % Geometric Call
+
+% Correlations
+corr1 = corr(PT_pilot, C1);
+corr2 = corr(PT_pilot, C2);
+corr3 = corr(PT_pilot, C3);
+fprintf('Corr with ST:        %.4f\n', corr1);
+fprintf('Corr with Euro Call: %.4f\n', corr2);
+fprintf('Corr with Geo Call:  %.4f\n\n', corr3);
+
+% Optimal beta from pilot (saved for Part 1c)
+cov_pilot = cov(PT_pilot, C2);
+beta_pilot = cov_pilot(1,2) / cov_pilot(2,2);
+fprintf('Pilot beta (saved for Part 1c): %.4f\n\n', beta_pilot);
+
+% Scatter Plots
+figure;
+subplot(1,3,1); scatter(C1, PT_pilot, '.'); xlabel('S_T'); ylabel('P_T'); title('P_T vs S_T');
+subplot(1,3,2); scatter(C2, PT_pilot, '.'); xlabel('Euro Call'); ylabel('P_T'); title('P_T vs Euro Call');
+subplot(1,3,3); scatter(C3, PT_pilot, '.'); xlabel('Geo Call'); ylabel('P_T'); title('P_T vs Geo Call');
+
+%% Part 1(b): Pricing - Standard MC and CV with recomputed beta
+% Black-Scholes price for European Call (known mean of C2)
+d1 = (log(S0/K) + (r + 0.5*sigma^2)*T) / (sigma*sqrt(T));
+d2 = d1 - sigma*sqrt(T);
+EY = S0*normcdf(d1) - K*exp(-r*T)*normcdf(d2);
+
+fprintf('=== Part 1(b): Recomputed Beta ===\n');
+fprintf('%-8s | %-10s | %-8s | %-16s | %-10s | %-8s | %-16s | %-8s\n', ...
+    'M', 'MC Price', 'MC Std', 'MC 95% CI', 'CV Price', 'CV Std', 'CV 95% CI', 'Beta');
+fprintf('%s\n', repmat('-',1,100));
+
+for M = M_vals
+    % Simulate paths
+    Z = randn(M, m);
+    S = zeros(M, m+1);
+    S(:,1) = S0;
+    for j = 1:m
+        S(:,j+1) = S(:,j) .* exp((r - 0.5*sigma^2)*dt + sigma*sqrt(dt)*Z(:,j));
+    end
+
+    % Payoffs
+    PT = exp(-r*T) * max(max(S, [], 2) - K, 0);
+    Y  = exp(-r*T) * max(S(:,end) - K, 0);
+
+    % Recompute beta from this sample
+    cov_mat = cov(PT, Y);
+    beta_b  = cov_mat(1,2) / cov_mat(2,2);
+
+    % Estimators
+    MC_price = mean(PT);
+    CV_price = mean(PT - beta_b * (Y - EY));
+
+    MC_std = std(PT) / sqrt(M);
+    CV_std = std(PT - beta_b*(Y - EY)) / sqrt(M);
+
+    MC_CI = [MC_price - 1.96*MC_std, MC_price + 1.96*MC_std];
+    CV_CI = [CV_price - 1.96*CV_std, CV_price + 1.96*CV_std];
+
+    fprintf('%-8d | %-10.4f | %-8.4f | [%-6.4f, %-6.4f] | %-10.4f | %-8.4f | [%-6.4f, %-6.4f] | %-8.4f\n', ...
+        M, MC_price, MC_std, MC_CI(1), MC_CI(2), CV_price, CV_std, CV_CI(1), CV_CI(2), beta_b);
+end
+
+%% Part 1(c): Pricing with fixed pilot beta
+fprintf('\n=== Part 1(c): Fixed Pilot Beta = %.4f ===\n', beta_pilot);
+fprintf('%-8s | %-10s | %-8s | %-16s | %-10s | %-8s | %-16s\n', ...
+    'M', 'MC Price', 'MC Std', 'MC 95% CI', 'CV Price', 'CV Std', 'CV 95% CI');
+fprintf('%s\n', repmat('-',1,90));
+
+for M = M_vals
+    Z = randn(M, m);
+    S = zeros(M, m+1);
+    S(:,1) = S0;
+    for j = 1:m
+        S(:,j+1) = S(:,j) .* exp((r - 0.5*sigma^2)*dt + sigma*sqrt(dt)*Z(:,j));
+    end
+
+    PT = exp(-r*T) * max(max(S, [], 2) - K, 0);
+    Y  = exp(-r*T) * max(S(:,end) - K, 0);
+
+    MC_price = mean(PT);
+    CV_price = mean(PT - beta_pilot * (Y - EY));
+
+    MC_std = std(PT) / sqrt(M);
+    CV_std = std(PT - beta_pilot*(Y - EY)) / sqrt(M);
+
+    MC_CI = [MC_price - 1.96*MC_std, MC_price + 1.96*MC_std];
+    CV_CI = [CV_price - 1.96*CV_std, CV_price + 1.96*CV_std];
+
+    fprintf('%-8d | %-10.4f | %-8.4f | [%-6.4f, %-6.4f] | %-10.4f | %-8.4f | [%-6.4f, %-6.4f]\n', ...
+        M, MC_price, MC_std, MC_CI(1), MC_CI(2), CV_price, CV_std, CV_CI(1), CV_CI(2));
+end
+
+
+%% Problem 3, Part 2: Antithetic Variates
+clear; clc;
+
+S0 = 100; r = 0.05; sigma = 0.3; T = 1; K = 110;
+m = 12; dt = T/m;
+
+fprintf('=== Part 2: Antithetic Variates ===\n');
+fprintf('%-8s | %-10s | %-8s | %-20s\n', 'M', 'Price', 'Std', '95% CI');
+fprintf('%s\n', repmat('-',1,55));
+
+for M = [1e4, 1e5, 1e6]
+    n = M/2; % number of antithetic pairs
+    Z = randn(n, m);
+
+    % Original paths
+    S1 = zeros(n, m+1); S1(:,1) = S0;
+    for j = 1:m
+        S1(:,j+1) = S1(:,j) .* exp((r - 0.5*sigma^2)*dt + sigma*sqrt(dt)*Z(:,j));
+    end
+
+    % Antithetic paths
+    S2 = zeros(n, m+1); S2(:,1) = S0;
+    for j = 1:m
+        S2(:,j+1) = S2(:,j) .* exp((r - 0.5*sigma^2)*dt + sigma*sqrt(dt)*(-Z(:,j)));
+    end
+
+    P1 = exp(-r*T) * max(max(S1, [], 2) - K, 0);
+    P2 = exp(-r*T) * max(max(S2, [], 2) - K, 0);
+
+    % Antithetic estimator: average of paired payoffs
+    P_anti = (P1 + P2) / 2;
+
+    price = mean(P_anti);
+    se    = std(P_anti) / sqrt(n); % n pairs, not M
+    CI    = [price - 1.96*se, price + 1.96*se];
+
+    fprintf('%-8d | %-10.4f | %-8.4f | [%-7.4f, %-7.4f]\n', M, price, se, CI(1), CI(2));
+end
+
+
+%% Problem 3, Part 3: Stratified Sampling
+clear; clc;
+
+S0 = 100; r = 0.05; sigma = 0.3; T = 1; K = 110;
+m = 12; dt = T/m;
+
+edges      = [-inf, -0.8, -0.4, -0.1, 0.1, 0.4, 0.8, inf];
+weights    = diff(normcdf(edges));
+num_strata = length(weights);
+
+%% Part 3(a): Proportional Allocation
+fprintf('=== Part 3(a): Proportional Allocation ===\n');
+fprintf('%-8s | %-10s | %-8s | %-20s\n', 'M', 'Price', 'Std Err', '95% CI');
+fprintf('%s\n', repmat('-',1,55));
+
+for M = [1e4, 1e5, 1e6]
+    nj = max(1, round(M * weights));
+    strata_means = zeros(num_strata, 1);
+    strata_vars  = zeros(num_strata, 1);
+
+    for j = 1:num_strata
+        n      = nj(j);
+        U      = rand(n, 1);
+        lo     = normcdf(edges(j)); hi = normcdf(edges(j+1));
+        Z_term = norminv(lo + U*(hi - lo));
+        B1     = Z_term * sqrt(T);
+
+        % --- Brownian Bridge inlined ---
+        S_paths = zeros(n, m+1);
+        S_paths(:,1) = S0;
+        B_curr = zeros(n, 1);
+        for i = 1:m-1
+            t_prev     = (i-1)*dt;
+            t_curr     = i*dt;
+            mu_bridge  = B_curr + (dt / (T - t_prev)) * (B1 - B_curr);
+            var_bridge = dt * (T - t_curr) / (T - t_prev);
+            B_curr     = mu_bridge + sqrt(var_bridge) * randn(n, 1);
+            S_paths(:, i+1) = S0 * exp((r - 0.5*sigma^2)*t_curr + sigma*B_curr);
+        end
+        S_paths(:, m+1) = S0 * exp((r - 0.5*sigma^2)*T + sigma*B1);
+        % --- End Brownian Bridge ---
+
+        PT_j = exp(-r*T) * max(max(S_paths, [], 2) - K, 0);
+        strata_means(j) = mean(PT_j);
+        strata_vars(j)  = var(PT_j);
+    end
+
+    price = sum(weights' .* strata_means);
+    se    = sqrt(sum((weights'.^2 .* strata_vars) ./ nj'));
+    CI    = [price - 1.96*se, price + 1.96*se];
+    fprintf('%-8d | %-10.4f | %-8.6f | [%-7.4f, %-7.4f]\n', M, price, se, CI(1), CI(2));
+end
+
+%% Part 3(b): Optimal Allocation
+N0       = 1000;
+nj_pilot = max(5, round(N0 * weights));
+sigma_j  = zeros(num_strata, 1);
+
+for j = 1:num_strata
+    n      = nj_pilot(j);
+    U      = rand(n, 1);
+    lo     = normcdf(edges(j)); hi = normcdf(edges(j+1));
+    Z_term = norminv(lo + U*(hi - lo));
+    B1     = Z_term * sqrt(T);
+
+    % --- Brownian Bridge inlined ---
+    S_paths = zeros(n, m+1);
+    S_paths(:,1) = S0;
+    B_curr = zeros(n, 1);
+    for i = 1:m-1
+        t_prev     = (i-1)*dt;
+        t_curr     = i*dt;
+        mu_bridge  = B_curr + (dt / (T - t_prev)) * (B1 - B_curr);
+        var_bridge = dt * (T - t_curr) / (T - t_prev);
+        B_curr     = mu_bridge + sqrt(var_bridge) * randn(n, 1);
+        S_paths(:, i+1) = S0 * exp((r - 0.5*sigma^2)*t_curr + sigma*B_curr);
+    end
+    S_paths(:, m+1) = S0 * exp((r - 0.5*sigma^2)*T + sigma*B1);
+    % --- End Brownian Bridge ---
+
+    PT_j       = exp(-r*T) * max(max(S_paths, [], 2) - K, 0);
+    sigma_j(j) = std(PT_j);
+end
+
+opt_alloc = weights' .* sigma_j;
+opt_alloc = opt_alloc / sum(opt_alloc);
+
+fprintf('\n=== Part 3(b): Optimal Allocation ===\n');
+fprintf('Pilot sigma_j per stratum: '); fprintf('%.4f  ', sigma_j); fprintf('\n');
+fprintf('Optimal alloc weights:     '); fprintf('%.4f  ', opt_alloc); fprintf('\n\n');
+fprintf('%-8s | %-10s | %-8s | %-20s\n', 'M', 'Price', 'Std Err', '95% CI');
+fprintf('%s\n', repmat('-',1,55));
+
+for M = [1e4, 1e5, 1e6]
+    nj = max(1, round(M * opt_alloc));
+    strata_means = zeros(num_strata, 1);
+    strata_vars  = zeros(num_strata, 1);
+
+    for j = 1:num_strata
+        n      = nj(j);
+        U      = rand(n, 1);
+        lo     = normcdf(edges(j)); hi = normcdf(edges(j+1));
+        Z_term = norminv(lo + U*(hi - lo));
+        B1     = Z_term * sqrt(T);
+
+        % --- Brownian Bridge inlined ---
+        S_paths = zeros(n, m+1);
+        S_paths(:,1) = S0;
+        B_curr = zeros(n, 1);
+        for i = 1:m-1
+            t_prev     = (i-1)*dt;
+            t_curr     = i*dt;
+            mu_bridge  = B_curr + (dt / (T - t_prev)) * (B1 - B_curr);
+            var_bridge = dt * (T - t_curr) / (T - t_prev);
+            B_curr     = mu_bridge + sqrt(var_bridge) * randn(n, 1);
+            S_paths(:, i+1) = S0 * exp((r - 0.5*sigma^2)*t_curr + sigma*B_curr);
+        end
+        S_paths(:, m+1) = S0 * exp((r - 0.5*sigma^2)*T + sigma*B1);
+        % --- End Brownian Bridge ---
+
+        PT_j = exp(-r*T) * max(max(S_paths, [], 2) - K, 0);
+        strata_means(j) = mean(PT_j);
+        strata_vars(j)  = var(PT_j);
+    end
+
+    price = sum(weights' .* strata_means);
+    se    = sqrt(sum((weights'.^2 .* strata_vars) ./ nj'));
+    CI    = [price - 1.96*se, price + 1.96*se];
+    fprintf('%-8d | %-10.4f | %-8.6f | [%-7.4f, %-7.4f]\n', M, price, se, CI(1), CI(2));
+end
