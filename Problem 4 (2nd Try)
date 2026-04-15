@@ -1,0 +1,88 @@
+%% Problem 4: Local Volatility Model
+clear; clc;
+
+% Parameters
+S0 = 100; K = 100; r = 0.05; T = 1;
+M  = 1e5; N = 365; dt = T/N;
+n  = M/2; % number of antithetic pairs
+
+%% 1. Standard Monte Carlo (uses n paths to match combined estimator sample size)
+S = S0 * ones(n, 1);
+for i = 0:N-1
+    t   = i*dt;
+    vol = 0.5 * exp(-t) * (100 ./ S).^0.3;
+    Z   = randn(n, 1);
+    S   = S .* exp((r - 0.5*vol.^2)*dt + vol.*sqrt(dt).*Z);
+end
+Put_MC = exp(-r*T) * max(K - S, 0);
+
+MC_price = mean(Put_MC);
+MC_std   = std(Put_MC);
+MC_se    = MC_std / sqrt(n);
+MC_CI    = [MC_price - 1.96*MC_se, MC_price + 1.96*MC_se];
+MC_var   = var(Put_MC);
+
+%% 2. Combined Antithetic + Control Variate
+sigma_const = 0.5; % matches sigma(0, S0) = 0.5*exp(0)*(100/100)^0.3
+
+S_plus  = S0 * ones(n, 1);
+S_minus = S0 * ones(n, 1);
+Y_plus  = S0 * ones(n, 1);
+Y_minus = S0 * ones(n, 1);
+
+for i = 0:N-1
+    t = i*dt;
+    Z = randn(n, 1);
+
+    % Local vol for each path
+    vol_p = 0.5 * exp(-t) * (100 ./ S_plus).^0.3;
+    vol_m = 0.5 * exp(-t) * (100 ./ S_minus).^0.3;
+
+    % Antithetic local vol paths
+    S_plus  = S_plus  .* exp((r - 0.5*vol_p.^2)*dt + vol_p.*sqrt(dt).*Z);
+    S_minus = S_minus .* exp((r - 0.5*vol_m.^2)*dt + vol_m.*sqrt(dt).*(-Z));
+
+    % Antithetic control variate paths (constant vol BS)
+    Y_plus  = Y_plus  .* exp((r - 0.5*sigma_const^2)*dt + sigma_const*sqrt(dt).*Z);
+    Y_minus = Y_minus .* exp((r - 0.5*sigma_const^2)*dt + sigma_const*sqrt(dt).*(-Z));
+end
+
+% Payoffs
+P_plus  = exp(-r*T) * max(K - S_plus,  0);
+P_minus = exp(-r*T) * max(K - S_minus, 0);
+P_anti  = (P_plus + P_minus) / 2;
+
+C_plus  = exp(-r*T) * max(K - Y_plus,  0);
+C_minus = exp(-r*T) * max(K - Y_minus, 0);
+C_anti  = (C_plus + C_minus) / 2;
+
+% Known BS put price (control mean)
+d1 = (log(S0/K) + (r + 0.5*sigma_const^2)*T) / (sigma_const*sqrt(T));
+d2 = d1 - sigma_const*sqrt(T);
+EY = K*exp(-r*T)*normcdf(-d2) - S0*normcdf(-d1);
+
+% Optimal beta
+cov_mat = cov(P_anti, C_anti);
+beta    = cov_mat(1,2) / cov_mat(2,2);
+
+% Combined estimator
+Combined = P_anti - beta * (C_anti - EY);
+
+CV_price = mean(Combined);
+CV_std   = std(Combined);
+CV_se    = CV_std / sqrt(n);
+CV_CI    = [CV_price - 1.96*CV_se, CV_price + 1.96*CV_se];
+CV_var   = var(Combined);
+
+%% Output
+fprintf('=== Problem 4: Local Volatility Put Option ===\n\n');
+fprintf('%-25s | %-10s | %-10s | %-10s | %-20s\n', 'Method', 'Price', 'Std Dev', 'Variance', '95% CI');
+fprintf('%s\n', repmat('-', 1, 80));
+fprintf('%-25s | %-10.4f | %-10.4f | %-10.4f | [%.4f, %.4f]\n', ...
+    'Standard MC', MC_price, MC_se, MC_var, MC_CI(1), MC_CI(2));
+fprintf('%-25s | %-10.4f | %-10.4f | %-10.4f | [%.4f, %.4f]\n', ...
+    'Antithetic + CV', CV_price, CV_se, CV_var, CV_CI(1), CV_CI(2));
+fprintf('%s\n', repmat('-', 1, 80));
+fprintf('Variance Reduction: %.2f%%\n', (MC_var - CV_var)/MC_var * 100);
+fprintf('Beta (control coeff): %.4f\n', beta);
+fprintf('BS Put Price (EY, control mean): %.4f\n', EY);
