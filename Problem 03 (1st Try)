@@ -1,0 +1,175 @@
+%% Problem 3: Lookback Call Option
+clear; clc;
+
+% Parameters
+S0 = 100; r = 0.05; sigma = 0.3; T = 1; K = 110; 
+m = 12; dt = T/m;
+M_vals = [1e4, 1e5, 1e6]; % Sample sizes
+
+% For Part (a): Pilot paths to find correlation
+M0 = 1000;
+Z_pilot = randn(M0, m);
+S_pilot = zeros(M0, m+1);
+S_pilot(:,1) = S0;
+
+for j = 1:m
+    S_pilot(:,j+1) = S_pilot(:,j) .* exp((r - 0.5*sigma^2)*dt + sigma*sqrt(dt)*Z_pilot(:,j));
+end
+
+% Payoff PT (Lookback)
+PT_pilot = exp(-r*T) * max(max(S_pilot, [], 2) - K, 0);
+
+% Candidate Control Variates
+C1 = S_pilot(:, end);                  % (i) ST
+C2 = exp(-r*T) * max(S_pilot(:,end)-K, 0); % (ii) European Call (ST-K)+
+% (Geometric Mean GT would go here for iii)
+
+% Calculate Correlations
+corr1 = corr(PT_pilot, C1);
+corr2 = corr(PT_pilot, C2);
+
+fprintf('Correlation with ST: %.4f\n', corr1);
+fprintf('Correlation with European Call: %.4f\n\n', corr2);
+
+%% Part (b) & (c): Pricing with Control Variate
+% We use the European Call (C2) because it is highly correlated with Lookback
+% Black-Scholes Price for the European Call (The known Mean E[Y])
+d1 = (log(S0/K) + (r + 0.5*sigma^2)*T) / (sigma*sqrt(T));
+d2 = d1 - sigma*sqrt(T);
+EY = S0*normcdf(d1) - K*exp(-r*T)*normcdf(d2);
+
+fprintf('%-10s | %-12s | %-12s | %-12s\n', 'M', 'MC Price', 'CV Price', 'Var Reduction');
+fprintf('-----------|--------------|--------------|--------------\n');
+
+for M = M_vals
+    Z = randn(M, m);
+    S = zeros(M, m+1);
+    S(:,1) = S0;
+    for j = 1:m
+        S = S0 * exp(cumsum((r - 0.5*sigma^2)*dt + sigma*sqrt(dt)*randn(M, m), 2));
+        S = [S0*ones(M,1) S]; % Add S0 to the paths
+    end
+    
+    % Actual Lookback Payoff
+    PT = exp(-r*T) * max(max(S, [], 2) - K, 0);
+    
+    % Control Variate (European Call)
+    Y = exp(-r*T) * max(S(:,end) - K, 0);
+    
+    % Calculate optimal beta (control coefficient)
+    cov_matrix = cov(PT, Y);
+    beta = cov_matrix(1,2) / cov_matrix(2,2);
+    
+    % Estimators
+    MC_estimate = mean(PT);
+    CV_estimate = mean(PT - beta * (Y - EY));
+    
+    % Variance Comparison
+    var_mc = var(PT);
+    var_cv = var(PT - beta*(Y - EY));
+    reduction = (var_mc - var_cv) / var_mc * 100;
+    
+    fprintf('%-10d | %-12.4f | %-12.4f | %-11.2f%%\n', M, MC_estimate, CV_estimate, reduction);
+end
+
+%% Part 1(a): Improved Pilot Study
+M0 = 1000; m = 12; dt = 1/m;
+Z = randn(M0, m);
+S = zeros(M0, m+1); S(:,1) = 100;
+for j = 1:m
+    S(:,j+1) = S(:,j) .* exp((0.05 - 0.5*0.3^2)*dt + 0.3*sqrt(dt)*Z(:,j));
+end
+
+PT = exp(-0.05*1) * max(max(S,[],2) - 110, 0);
+C1 = S(:,end); % ST
+C2 = exp(-0.05*1) * max(S(:,end)-110, 0); % European Call
+GT = prod(S, 2).^(1/(m+1)); % Geometric Mean
+C3 = exp(-0.05*1) * max(GT - 110, 0); % Geometric Call
+
+fprintf('Corr with ST: %.4f\n', corr(PT, C1));
+fprintf('Corr with Euro Call: %.4f\n', corr(PT, C2));
+fprintf('Corr with Geo Call: %.4f\n', corr(PT, C3));
+
+% Scatter Plot Requirement
+subplot(1,3,1); scatter(C1, PT, '.'); title('PT vs ST');
+subplot(1,3,2); scatter(C2, PT, '.'); title('PT vs Euro Call');
+subplot(1,3,3); scatter(C3, PT, '.'); title('PT vs Geo Call');
+
+%% Part 2: Antithetic Variates
+fprintf('\n--- Part 2: Antithetic Variates ---\n');
+for M = [1e4, 1e5, 1e6]
+    Z = randn(M/2, m);
+    % Path 1
+    S1 = 100 * exp(cumsum((0.05 - 0.5*0.3^2)*dt + 0.3*sqrt(dt)*Z, 2));
+    S1 = [100*ones(M/2,1), S1];
+    % Path 2 (Antithetic)
+    S2 = 100 * exp(cumsum((0.05 - 0.5*0.3^2)*dt + 0.3*sqrt(dt)*(-Z), 2));
+    S2 = [100*ones(M/2,1), S2];
+    
+    P1 = exp(-0.05) * max(max(S1,[],2) - 110, 0);
+    P2 = exp(-0.05) * max(max(S2,[],2) - 110, 0);
+    P_anti = (P1 + P2) / 2;
+    
+    fprintf('M=%d | Price: %.4f | Std: %.4f\n', M, mean(P_anti), std(P_anti)/sqrt(M/2));
+end
+
+%% Problem 3, Part 3: Stratified Sampling
+clear; clc;
+S0 = 100; r = 0.05; sigma = 0.3; T = 1; K = 110; m = 12; dt = T/m;
+
+% Define the Strata Intervals (Edges)
+edges = [-inf, -0.8, -0.4, -0.1, 0.1, 0.4, 0.8, inf];
+weights = diff(normcdf(edges)); % Probability of falling into each interval
+num_strata = length(weights);
+
+fprintf('\n--- Part 3: Stratified Sampling ---\n');
+fprintf('%-10s | %-12s | %-12s\n', 'M', 'Strat Price', 'Std Error');
+fprintf('-----------|--------------|--------------\n');
+
+for M = [1e4, 1e5, 1e6]
+    % Proportional Allocation: How many samples per interval
+    nj = round(M * weights);
+    sum_nj = sum(nj);
+    
+    all_PT = [];
+    strata_means = zeros(num_strata, 1);
+    strata_vars = zeros(num_strata, 1);
+    
+    for j = 1:num_strata
+        % 1. Sample Z (terminal value) within the specific stratum j
+        U = rand(nj(j), 1);
+        lower_p = normcdf(edges(j));
+        upper_p = normcdf(edges(j+1));
+        Z_terminal = norminv(lower_p + U * (upper_p - lower_p));
+        
+        % 2. Use Brownian Bridge to simulate intermediate steps
+        % B(t) = t*B(1) + sigma_bridge * Z_bridge
+        B_terminal = Z_terminal * sqrt(T);
+        S_paths = zeros(nj(j), m+1);
+        S_paths(:,1) = S0;
+        
+        % Generate the bridge for intermediate monthly steps
+        current_B = zeros(nj(j), 1);
+        for i = 1:m-1
+            t_curr = i*dt;
+            mean_bridge = current_B + (dt/(T - (i-1)*dt)) * (B_terminal - current_B);
+            var_bridge = dt * (T - i*dt) / (T - (i-1)*dt);
+            current_B = mean_bridge + sqrt(var_bridge) * randn(nj(j), 1);
+            
+            % Convert Brownian Motion to Stock Price
+            S_paths(:, i+1) = S0 * exp((r - 0.5*sigma^2)*t_curr + sigma*current_B);
+        end
+        S_paths(:, m+1) = S0 * exp((r - 0.5*sigma^2)*T + sigma*B_terminal);
+        
+        % 3. Calculate Payoff for this stratum
+        PT_j = exp(-r*T) * max(max(S_paths, [], 2) - K, 0);
+        strata_means(j) = mean(PT_j);
+        strata_vars(j) = var(PT_j);
+    end
+    
+    % Final Stratified Estimate (Weighted average of means)
+    strat_price = sum(weights' .* strata_means);
+    strat_se = sqrt(sum((weights'.^2 .* strata_vars) ./ nj'));
+    
+    fprintf('%-10d | %-12.4f | %-12.4f\n', M, strat_price, strat_se);
+end
