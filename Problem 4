@@ -86,3 +86,15 @@ fprintf('%s\n', repmat('-', 1, 80));
 fprintf('Variance Reduction: %.2f%%\n', (MC_var - CV_var)/MC_var * 100);
 fprintf('Beta (control coeff): %.4f\n', beta);
 fprintf('BS Put Price (EY, control mean): %.4f\n', EY);
+
+
+=== Problem 4: Local Volatility Put Option ===
+
+Method                    | Price      | Std Dev    | Variance   | 95% CI              
+--------------------------------------------------------------------------------
+Standard MC               | 10.5086    | 0.0667     | 222.5533   | [10.3778, 10.6393]
+Antithetic + CV           | 10.4928    | 0.0154     | 11.8657    | [10.4626, 10.5230]
+--------------------------------------------------------------------------------
+Variance Reduction: 94.67%
+Beta (control coeff): 0.8410
+BS Put Price (EY, control mean): 16.9155
