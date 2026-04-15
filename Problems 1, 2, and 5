@@ -1,0 +1,279 @@
+%% Problem 1
+
+%% i)
+
+clear; clc;
+
+k_vals = [3 4 5 6];
+
+for k = k_vals
+    M = 10^k;
+    
+    % Generate Exp(1)
+    X = exprnd(1, M, 1);
+    
+    % Indicator
+    indicators = (X > 10);
+    
+    % Estimate
+    p_hat = mean(indicators);
+    
+    % Std error
+    se = sqrt(var(indicators)/M);
+    
+    fprintf('Regular MC (M=1e%d): p_hat = %.6e, SE = %.2e\n', k, p_hat, se);
+end
+
+% True value (Actual prob that X > 10)
+fprintf('True value: %.6e\n', exp(-10));
+
+%% ii)
+
+% We choose a initial distribution that makes large values more likely. For
+% this we used Y ~ Exp(lambda) with lambda = 0.1
+
+clear; clc;
+
+k_vals = [3 4 5 6];
+lambda = 0.1; % proposal rate
+
+for k = k_vals
+    M = 10^k;
+    
+    % Sample from Exp(lambda)
+    Y = exprnd(1/lambda, M, 1);
+    
+    % Weights
+    w = (1/lambda) * exp(-(1-lambda)*Y);
+    
+    % Indicator
+    indicators = (Y > 10);
+    
+    % IS estimator
+    est = indicators .* w;
+    p_hat = mean(est);
+    
+    % Std error
+    se = sqrt(var(est)/M);
+    
+    fprintf('ImportanceSampling (M=1e%d): p_hat = %.6e, SE = %.2e\n', k, p_hat, se);
+end
+
+% True value
+fprintf('True value: %.6e\n', exp(-10));
+
+
+%% Problem 2
+
+%% 1) Standard Monte Carlo
+
+clear; clc;
+
+S0 = 100; r = 0.05; sigma = 0.3;
+T1 = 0.5; T2 = 1;
+
+k_vals = 3:7;
+
+mc_est = zeros(size(k_vals));
+mc_ci_low = zeros(size(k_vals));
+mc_ci_high = zeros(size(k_vals));
+
+for i = 1:length(k_vals)
+    M = 10^k_vals(i);
+
+    % Simulate Brownian increments
+    Z1 = randn(M,1);
+    Z2 = randn(M,1);
+
+    % Simulate S_T1 and S_T2
+    ST1 = S0 * exp((r - 0.5*sigma^2)*T1 + sigma*sqrt(T1)*Z1);
+    ST2 = ST1 .* exp((r - 0.5*sigma^2)*(T2-T1) + sigma*sqrt(T2-T1)*Z2);
+
+    % Payoff
+    G = max(ST2 - ST1, 0);
+
+    discG = exp(-r*T2) * G;
+
+    % Estimate
+    mu = mean(discG);
+    se = std(discG)/sqrt(M);
+
+    mc_est(i) = mu;
+    mc_ci_low(i) = mu - 1.96*se;
+    mc_ci_high(i) = mu + 1.96*se;
+end
+%% 2) Conditional Monte Carlo
+
+cmc_est = zeros(size(k_vals));
+cmc_ci_low = zeros(size(k_vals));
+cmc_ci_high = zeros(size(k_vals));
+
+tau = T2 - T1;
+
+% Black-Scholes function
+BS_call = @(S,K,r,sigma,tau) ...
+    S .* normcdf((log(S./K)+(r+0.5*sigma^2)*tau)./(sigma*sqrt(tau))) ...
+  - K .* exp(-r*tau).*normcdf((log(S./K)+(r-0.5*sigma^2)*tau)./(sigma*sqrt(tau)));
+
+for i = 1:length(k_vals)
+    M = 10^k_vals(i);
+
+    % Simulate only up to T1
+    Z = randn(M,1);
+    ST1 = S0 * exp((r - 0.5*sigma^2)*T1 + sigma*sqrt(T1)*Z);
+
+    % Conditional expectation
+    cond_val = BS_call(ST1, ST1, r, sigma, tau);
+
+    % Discount to time 0
+    disc_val = exp(-r*T1) * cond_val;
+
+    % Estimate
+    mu = mean(disc_val);
+    se = std(disc_val)/sqrt(M);
+
+    cmc_est(i) = mu;
+    cmc_ci_low(i) = mu - 1.96*se;
+    cmc_ci_high(i) = mu + 1.96*se;
+end
+
+%% Plot convergence and confidence intervals
+
+figure;
+hold on;
+
+x = k_vals;
+
+errorbar(x, mc_est, mc_est - mc_ci_low, mc_ci_high - mc_est, '-o', 'LineWidth',1.5);
+errorbar(x, cmc_est, cmc_est - cmc_ci_low, cmc_ci_high - cmc_est, '-s', 'LineWidth',1.5);
+
+legend('Standard MC','Conditional MC','Location','best');
+xlabel('k (M = 10^k)');
+ylabel('Option Price');
+title('Convergence with 95% Confidence Intervals');
+grid on;
+
+%% Problem 5
+
+%% 1. Heston Monte Carlo
+
+clear; clc;
+
+% Parameters
+S0 = 100; K = 100; T = 1;
+r = 0.04;
+kappa = 3; theta = 0.25;
+sigma = 0.75*sqrt(2*theta*kappa);
+rho = -0.2;
+X0 = 0.25;
+
+M = 1e6;
+dt = 1/365;
+N = T/dt;
+
+% Storage
+payoffs = zeros(M,1);
+
+for i = 1:M
+    S = S0;
+    X = X0;
+
+    for n = 1:N
+        Z1 = randn;
+        Z2 = randn;
+
+        dB = sqrt(dt)*Z1;
+        dW = sqrt(dt)*Z2;
+
+        % Correlated increment for S
+        dS_noise = rho*dB + sqrt(1-rho^2)*dW;
+
+        % Full truncation Euler
+        X = max(X,0);
+        X = X + kappa*(theta - X)*dt + sigma*sqrt(X)*dB;
+        X = max(X,0);
+
+        S = S * exp((r - 0.5*X)*dt + sqrt(X)*dS_noise);
+    end
+
+    payoffs(i) = exp(-r*T)*max(S - K, 0);
+end
+
+% Estimate
+price_mc = mean(payoffs);
+se_mc = std(payoffs)/sqrt(M);
+
+CI_mc = [price_mc - 1.96*se_mc, price_mc + 1.96*se_mc];
+
+fprintf('Standard MC:\n');
+fprintf('Price = %.4f\n', price_mc);
+fprintf('95%% CI = [%.4f, %.4f]\n', CI_mc(1), CI_mc(2));
+
+%% 2.
+
+v_list = 0.05*(1:10);
+
+price_cv = zeros(size(v_list));
+CI_low = zeros(size(v_list));
+CI_high = zeros(size(v_list));
+
+for j = 1:length(v_list)
+
+    v = v_list(j);
+
+    Y = zeros(M,1); % Heston payoff
+    C = zeros(M,1); % control payoff
+
+    for i = 1:M
+        S = S0;
+        X = X0;
+        G = S0;
+
+        for n = 1:N
+            Z1 = randn;
+            Z2 = randn;
+
+            dB = sqrt(dt)*Z1;
+            dW = sqrt(dt)*Z2;
+
+            % Shared driver
+            dZ = rho*dB + sqrt(1-rho^2)*dW;
+
+            % Heston update
+            X = max(X,0);
+            X = X + kappa*(theta - X)*dt + sigma*sqrt(X)*dB;
+            X = max(X,0);
+
+            S = S * exp((r - 0.5*X)*dt + sqrt(X)*dZ);
+
+            % Control GBM
+            G = G * exp((r - 0.5*v^2)*dt + v*dZ);
+        end
+
+        Y(i) = exp(-r*T)*max(S - K, 0);
+        C(i) = exp(-r*T)*max(G - K, 0);
+    end
+
+    % Exact BS price for control
+    d1 = (log(S0/K)+(r+0.5*v^2)*T)/(v*sqrt(T));
+    d2 = d1 - v*sqrt(T);
+
+    BS = S0*normcdf(d1) - K*exp(-r*T)*normcdf(d2);
+
+    % Optimal beta
+    beta = cov(Y,C);
+    beta = beta(1,2)/var(C);
+
+    % Control variate estimator
+    Z = Y - beta*(C - BS);
+
+    mu = mean(Z);
+    se = std(Z)/sqrt(M);
+
+    price_cv(j) = mu;
+    CI_low(j) = mu - 1.96*se;
+    CI_high(j) = mu + 1.96*se;
+
+    fprintf('v=%.2f: Price=%.4f, CI=[%.4f, %.4f]\n', ...
+        v, mu, CI_low(j), CI_high(j));
+end
