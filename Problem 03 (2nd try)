@@ -168,11 +168,11 @@ num_strata = length(weights);
 
 %% Part 3(a): Proportional Allocation
 fprintf('=== Part 3(a): Proportional Allocation ===\n');
-fprintf('%-8s | %-10s | %-8s | %-20s\n', 'M', 'Price', 'Std Err', '95% CI');
-fprintf('%s\n', repmat('-',1,55));
+fprintf('%-10s | %-10s | %-10s | %-22s\n', 'M', 'Price', 'Std Err', '95% CI');
+fprintf('%s\n', repmat('-',1,58));
 
 for M = [1e4, 1e5, 1e6]
-    nj = max(1, round(M * weights));
+    nj = max(2, round(M * weights));  % at least 2 per stratum for var()
     strata_means = zeros(num_strata, 1);
     strata_vars  = zeros(num_strata, 1);
 
@@ -183,7 +183,6 @@ for M = [1e4, 1e5, 1e6]
         Z_term = norminv(lo + U*(hi - lo));
         B1     = Z_term * sqrt(T);
 
-        % --- Brownian Bridge inlined ---
         S_paths = zeros(n, m+1);
         S_paths(:,1) = S0;
         B_curr = zeros(n, 1);
@@ -196,7 +195,6 @@ for M = [1e4, 1e5, 1e6]
             S_paths(:, i+1) = S0 * exp((r - 0.5*sigma^2)*t_curr + sigma*B_curr);
         end
         S_paths(:, m+1) = S0 * exp((r - 0.5*sigma^2)*T + sigma*B1);
-        % --- End Brownian Bridge ---
 
         PT_j = exp(-r*T) * max(max(S_paths, [], 2) - K, 0);
         strata_means(j) = mean(PT_j);
@@ -205,11 +203,12 @@ for M = [1e4, 1e5, 1e6]
 
     price = sum(weights' .* strata_means);
     se    = sqrt(sum((weights'.^2 .* strata_vars) ./ nj'));
-    CI    = [price - 1.96*se, price + 1.96*se];
-    fprintf('%-8d | %-10.4f | %-8.6f | [%-7.4f, %-7.4f]\n', M, price, se, CI(1), CI(2));
+    CI_lo = price - 1.96*se;
+    CI_hi = price + 1.96*se;
+    fprintf('%-10d | %-10.4f | %-10.6f | [%.4f, %.4f]\n', M, price, se, CI_lo, CI_hi);
 end
 
-%% Part 3(b): Optimal Allocation
+%% Part 3(b): Optimal Allocation - Pilot
 N0       = 1000;
 nj_pilot = max(5, round(N0 * weights));
 sigma_j  = zeros(num_strata, 1);
@@ -221,7 +220,6 @@ for j = 1:num_strata
     Z_term = norminv(lo + U*(hi - lo));
     B1     = Z_term * sqrt(T);
 
-    % --- Brownian Bridge inlined ---
     S_paths = zeros(n, m+1);
     S_paths(:,1) = S0;
     B_curr = zeros(n, 1);
@@ -234,23 +232,22 @@ for j = 1:num_strata
         S_paths(:, i+1) = S0 * exp((r - 0.5*sigma^2)*t_curr + sigma*B_curr);
     end
     S_paths(:, m+1) = S0 * exp((r - 0.5*sigma^2)*T + sigma*B1);
-    % --- End Brownian Bridge ---
 
     PT_j       = exp(-r*T) * max(max(S_paths, [], 2) - K, 0);
     sigma_j(j) = std(PT_j);
 end
 
-opt_alloc = weights' .* sigma_j;
-opt_alloc = opt_alloc / sum(opt_alloc);
+% Optimal allocation: n_j proportional to w_j * sigma_j
+opt_alloc = (weights' .* sigma_j) / sum(weights' .* sigma_j);
 
 fprintf('\n=== Part 3(b): Optimal Allocation ===\n');
-fprintf('Pilot sigma_j per stratum: '); fprintf('%.4f  ', sigma_j); fprintf('\n');
-fprintf('Optimal alloc weights:     '); fprintf('%.4f  ', opt_alloc); fprintf('\n\n');
-fprintf('%-8s | %-10s | %-8s | %-20s\n', 'M', 'Price', 'Std Err', '95% CI');
-fprintf('%s\n', repmat('-',1,55));
+fprintf('Pilot sigma_j:      '); fprintf('%.4f  ', sigma_j);   fprintf('\n');
+fprintf('Optimal alloc wts:  '); fprintf('%.4f  ', opt_alloc); fprintf('\n\n');
+fprintf('%-10s | %-10s | %-10s | %-22s\n', 'M', 'Price', 'Std Err', '95% CI');
+fprintf('%s\n', repmat('-',1,58));
 
 for M = [1e4, 1e5, 1e6]
-    nj = max(1, round(M * opt_alloc));
+    nj = max(2, round(M * opt_alloc));  % at least 2 per stratum
     strata_means = zeros(num_strata, 1);
     strata_vars  = zeros(num_strata, 1);
 
@@ -261,7 +258,6 @@ for M = [1e4, 1e5, 1e6]
         Z_term = norminv(lo + U*(hi - lo));
         B1     = Z_term * sqrt(T);
 
-        % --- Brownian Bridge inlined ---
         S_paths = zeros(n, m+1);
         S_paths(:,1) = S0;
         B_curr = zeros(n, 1);
@@ -274,7 +270,6 @@ for M = [1e4, 1e5, 1e6]
             S_paths(:, i+1) = S0 * exp((r - 0.5*sigma^2)*t_curr + sigma*B_curr);
         end
         S_paths(:, m+1) = S0 * exp((r - 0.5*sigma^2)*T + sigma*B1);
-        % --- End Brownian Bridge ---
 
         PT_j = exp(-r*T) * max(max(S_paths, [], 2) - K, 0);
         strata_means(j) = mean(PT_j);
@@ -283,6 +278,7 @@ for M = [1e4, 1e5, 1e6]
 
     price = sum(weights' .* strata_means);
     se    = sqrt(sum((weights'.^2 .* strata_vars) ./ nj'));
-    CI    = [price - 1.96*se, price + 1.96*se];
-    fprintf('%-8d | %-10.4f | %-8.6f | [%-7.4f, %-7.4f]\n', M, price, se, CI(1), CI(2));
+    CI_lo = price - 1.96*se;
+    CI_hi = price + 1.96*se;
+    fprintf('%-10d | %-10.4f | %-10.6f | [%.4f, %.4f]\n', M, price, se, CI_lo, CI_hi);
 end
